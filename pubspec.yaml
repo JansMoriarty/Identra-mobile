@@ -13,6 +13,8 @@ dependencies:
   flutter_svg: ^2.0.10 # Jika icon/ilustrasi kamu formatnya SVG
   table_calendar: ^3.1.2
   intl: ^0.19.0
+  http: ^1.6.0
+  shared_preferences: ^2.5.3
 
 flutter:
   uses-material-design: true

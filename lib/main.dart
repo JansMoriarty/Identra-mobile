@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:identra_mobile_flutter/home.dart';
+import 'package:identra_mobile_flutter/login_page.dart';
 import 'package:identra_mobile_flutter/main_navigation.dart';
 import 'package:identra_mobile_flutter/stats.dart';
 
@@ -26,7 +27,7 @@ class MainApp extends StatelessWidget {
           displayColor: Colors.white,
         ),
       ),
-      home: const MainNavigation(),
+      home: const LoginPage(),
     );
   }
 }

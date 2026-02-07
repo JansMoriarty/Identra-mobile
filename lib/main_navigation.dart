@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:identra_mobile_flutter/home.dart';
+import 'package:identra_mobile_flutter/login_page.dart';
 import 'package:identra_mobile_flutter/stats.dart';
 import 'dart:ui';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class MainNavigation extends StatefulWidget {
   const MainNavigation({super.key});
@@ -43,6 +45,24 @@ class _MainNavigationState extends State<MainNavigation> {
     _pageController = PageController(initialPage: _selectedIndex);
   }
 
+  Future<void> _handleLogout(BuildContext context) async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+
+    // Hapus semua data (token, nama, dll)
+    await prefs.clear();
+
+    if (!context.mounted) return;
+
+    // Tendang balik ke halaman Login dan hapus semua history page
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(
+          builder: (context) =>
+              const LoginPage()), // Sesuaikan nama class Login kamu
+      (route) => false,
+    );
+  }
+
   @override
   void dispose() {
     _pageController.dispose();
@@ -67,12 +87,10 @@ class _MainNavigationState extends State<MainNavigation> {
             _selectedIndex = index;
           });
         },
-        children: const [
+        children: [
           HomeScreen(),
           StatsScreen(),
-          Center(
-              child:
-                  Text("Profile Page", style: TextStyle(color: Colors.white))),
+          _buildProfilePage(context)
         ],
       ),
       bottomNavigationBar: _buildBottomNav(),
@@ -128,6 +146,49 @@ class _MainNavigationState extends State<MainNavigation> {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildProfilePage(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.account_circle, size: 100, color: Colors.white24),
+          const SizedBox(height: 16),
+          const Text(
+            "Akun Saya",
+            style: TextStyle(
+                color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            "Keluar dari akun untuk mengganti user atau mengakhiri sesi.",
+            textAlign: TextAlign.center,
+            style:
+                TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 14),
+          ),
+          const SizedBox(height: 32),
+
+          // --- TOMBOL LOGOUT ---
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: () => _handleLogout(context),
+              icon: const Icon(Icons.logout, color: Colors.white),
+              label: const Text("Logout Sekarang",
+                  style: TextStyle(color: Colors.white)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.redAccent.withOpacity(0.8),
+                padding: const EdgeInsets.symmetric(vertical: 15),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

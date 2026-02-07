@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   runApp(const AbsensiApp());
@@ -53,8 +54,61 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  String _userName = "Loading...";
+  String _jabatanAktif = "Belum Ditugaskan";
+
+  Color _getAvatarColor(String name) {
+    final List<Color> colors = [
+      Colors.amber,
+      Colors.blueAccent,
+      Colors.greenAccent,
+      Colors.orangeAccent,
+      Colors.pinkAccent,
+      Colors.purpleAccent,
+      Colors.tealAccent,
+    ];
+
+    // Logika sederhana: ambil warna berdasarkan panjang karakter nama
+    // supaya warnanya tetap/konsisten untuk user tersebut.
+    return colors[name.length % colors.length];
+  }
+
+  String _getInitials(String name) {
+    if (name.isEmpty) return "G";
+    List<String> names = name.split(" ");
+    String initials = "";
+
+    // Ambil huruf pertama dari maksimal 2 kata pertama
+    int numWords = names.length > 2 ? 2 : names.length;
+    for (var i = 0; i < numWords; i++) {
+      if (names[i].isNotEmpty) {
+        initials += names[i][0].toUpperCase();
+      }
+    }
+    return initials;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserData();
+  }
+
+  Future<void> _loadUserData() async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+
+    print("USER NAME: ${prefs.getString('user_name')}");
+    print("JABATAN AKTIF: ${prefs.getString('jabatan_aktif')}");
+
+    setState(() {
+      _userName = prefs.getString('user_name') ?? "Guru";
+      _jabatanAktif = prefs.getString('jabatan_aktif') ?? "Belum Ditugaskan";
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
+    Color themeColor = _getAvatarColor(_userName);
     return Scaffold(
       // Background Scaffold dibuat transparan agar Container di bawahnya terlihat
       backgroundColor: Colors.transparent,
@@ -80,7 +134,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       // Header Section
-                      _buildHeader(),
+                      _buildHeader(themeColor),
                       const SizedBox(height: 28),
 
                       // Greeting Card Section
@@ -116,7 +170,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // --- WIDGET: HEADER ---
-  Widget _buildHeader() {
+  Widget _buildHeader(Color themeColor) {
     return Row(
       children: [
         Container(
@@ -124,28 +178,37 @@ class _HomeScreenState extends State<HomeScreen> {
           height: 50,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            border: Border.all(color: Colors.white, width: 2),
-            image: const DecorationImage(
-              image:
-                  AssetImage('assets/images/profile.jpeg'), // Ganti foto profil
-              fit: BoxFit.cover,
+            color: themeColor.withOpacity(0.15), // Sekarang dia kenal!
+            border: Border.all(color: themeColor.withOpacity(0.5), width: 2),
+          ),
+          child: Center(
+            child: Text(
+              _getInitials(_userName),
+              style: GoogleFonts.poppins(
+                color: themeColor,
+                fontWeight: FontWeight.bold,
+                fontSize: 18,
+              ),
             ),
           ),
-        ),
+        ), // <
         const SizedBox(width: 12),
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              "Pauzan Rizky Alamsyah",
+            Text(
+              _userName,
               style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.bold,
                   color: Color(0xffffffff)),
             ),
             Text(
-              "Kepala Sekolah",
-              style: TextStyle(fontSize: 12, color: AppColors.textGrey),
+              _jabatanAktif.isNotEmpty ? _jabatanAktif : "Belum Ditugaskan",
+              style: const TextStyle(
+                fontSize: 12,
+                color: AppColors.textGrey,
+              ),
             ),
           ],
         ),
