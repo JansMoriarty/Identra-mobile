@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:identra_mobile_flutter/home.dart';
 import 'package:identra_mobile_flutter/login_page.dart';
 import 'package:identra_mobile_flutter/main_navigation.dart';
-import 'package:identra_mobile_flutter/stats.dart';
 
 void main() {
   runApp(const MainApp());
@@ -27,7 +25,14 @@ class MainApp extends StatelessWidget {
           displayColor: Colors.white,
         ),
       ),
-      home: const LoginPage(),
+      // Gunakan initialRoute saja
+      initialRoute: '/',
+      routes: {
+        '/': (context) => const LoginPage(),
+        '/login': (context) => const LoginPage(),
+        '/main': (context) => const MainNavigation(),
+      },
+      // Properti 'home' dihapus karena sudah diwakili oleh '/' di routes
     );
   }
 }

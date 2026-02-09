@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:identra_mobile_flutter/models/attendance_model.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 
 void main() {
   runApp(const AbsensiApp());
@@ -56,6 +59,27 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   String _userName = "Loading...";
   String _jabatanAktif = "Belum Ditugaskan";
+  String _guruId = "";
+  String _jamMasuk = "--:--";
+  String _jamPulang = "--:--";
+  bool _isLoading = false;
+
+  Future<void> _handleRefresh() async {
+    setState(() => _isLoading = true);
+
+    // Menjalankan kedua fungsi secara bersamaan
+    await Future.wait([
+      _loadUserData(),
+      fetchAttendanceToday(),
+    ]);
+
+    // Beri sedikit delay agar user sempat melihat state loading (opsional)
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    if (mounted) {
+      setState(() => _isLoading = false);
+    }
+  }
 
   Color _getAvatarColor(String name) {
     final List<Color> colors = [
@@ -68,8 +92,6 @@ class _HomeScreenState extends State<HomeScreen> {
       Colors.tealAccent,
     ];
 
-    // Logika sederhana: ambil warna berdasarkan panjang karakter nama
-    // supaya warnanya tetap/konsisten untuk user tersebut.
     return colors[name.length % colors.length];
   }
 
@@ -91,78 +113,160 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    _loadUserData();
+    _initData();
   }
+
+  Future<void> _initData() async {
+    await _loadUserData();
+    await fetchAttendanceToday();
+  }
+
+  AttendanceModel? _todayAttendance;
 
   Future<void> _loadUserData() async {
     final SharedPreferences prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
 
-    print("USER NAME: ${prefs.getString('user_name')}");
-    print("JABATAN AKTIF: ${prefs.getString('jabatan_aktif')}");
+    // --- TAMBAHKAN LOG INI ---
+    print("JABATAN_DARI_PREFS: ${prefs.getString('jabatan_aktif')}");
 
     setState(() {
       _userName = prefs.getString('user_name') ?? "Guru";
-      _jabatanAktif = prefs.getString('jabatan_aktif') ?? "Belum Ditugaskan";
+
+      // Perbaikan logika di sini
+      String? storedJabatan = prefs.getString('jabatan_aktif');
+      _jabatanAktif = (storedJabatan != null && storedJabatan.isNotEmpty)
+          ? storedJabatan
+          : "Guru Tetap";
+
+      _guruId = prefs.getString('guru_id') ?? "";
+      _jamMasuk = prefs.getString('jam_masuk') ?? "--:--";
+      _jamPulang = prefs.getString('jam_pulang') ?? "--:--";
     });
+  }
+
+  Future<void> fetchAttendanceToday() async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    final String? token = prefs.getString('auth_token');
+    final String? guruId = prefs.getString('guru_id');
+
+    if (token == null || guruId == null) return;
+
+    try {
+      // SESUAIKAN: Path parameter /{guru_id} bukan ?guru_id=
+      final String url =
+          "https://spinningly-proscientific-renay.ngrok-free.dev/api/attendance/today/$guruId";
+
+      final response = await http.get(
+        Uri.parse(url),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+          // WAJIB: Agar Ngrok tidak mengirim halaman "Browser Warning"
+          'ngrok-skip-browser-warning': 'true',
+        },
+      );
+
+      print("DEBUG: Fetching to $url");
+      print("DEBUG: Response Body: ${response.body}");
+
+      if (response.statusCode == 200) {
+        final responseData = jsonDecode(response.body);
+
+        if (responseData['success'] == true && responseData['data'] != null) {
+          final data = responseData['data'];
+
+          setState(() {
+            // Ambil jam_masuk dan jam_pulang dari JSON
+            _jamMasuk = data['jam_masuk'] ?? "--:--";
+            _jamPulang = data['jam_pulang'] ?? "--:--";
+          });
+        }
+      } else {
+        print("DEBUG: Server Error ${response.statusCode}");
+      }
+    } catch (e) {
+      print("DEBUG: Connection Error: $e");
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     Color themeColor = _getAvatarColor(_userName);
+
     return Scaffold(
-      // Background Scaffold dibuat transparan agar Container di bawahnya terlihat
       backgroundColor: Colors.transparent,
       body: Container(
         width: double.infinity,
         height: double.infinity,
-        // --- 1. SETTING BACKGROUND PAGE UTAMA (IMAGE) ---
         decoration: const BoxDecoration(
           image: DecorationImage(
-            // Pastikan file 'bg_main.png' ada di assets
             image: AssetImage('assets/images/bg_main.png'),
             fit: BoxFit.cover,
           ),
         ),
         child: SafeArea(
-          child: Column(
-            children: [
-              // Bagian Scrollable (Header sampai Stats)
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(18.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Header Section
-                      _buildHeader(themeColor),
-                      const SizedBox(height: 28),
+          // --- BUNGKUS DENGAN REFRESH INDICATOR ---
+          child: RefreshIndicator(
+            onRefresh: _handleRefresh, // Fungsi yang dipanggil saat ditarik
+            color: Colors.blue, // Warna spinner
+            child: Column(
+              children: [
+                Expanded(
+                  child: SingleChildScrollView(
+                    // physics wajib AlwaysScrollable agar bisa di-refresh meski konten pendek
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.all(18.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _buildHeader(themeColor),
+                        const SizedBox(height: 28),
 
-                      // Greeting Card Section
-                      _buildGreetingCard(),
-                      const SizedBox(height: 16),
+                        // Greeting Card vs Skeleton
+                        _isLoading
+                            ? _buildFlatSkeleton(
+                                width: double.infinity, height: 160, radius: 24)
+                            : _buildGreetingCard(),
 
-                      // Attendance Status (Masuk/Pulang)
-                      _buildAttendanceRow(),
-                      const SizedBox(height: 28),
+                        const SizedBox(height: 16),
 
-                      // Stats Section
-                      const Text(
-                        "Your Stats",
-                        style: TextStyle(
-                            fontSize: 18, fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 16),
-                      _buildStatsGrid(),
+                        // Attendance Row vs Skeleton
+                        _isLoading
+                            ? _buildFlatSkeleton(
+                                width: double.infinity, height: 100, radius: 20)
+                            : _buildAttendanceRow(),
 
-                      const SizedBox(height: 24),
+                        const SizedBox(height: 28),
+                        _isLoading
+                            ? _buildFlatSkeleton(
+                                width: 150,
+                                height: 20,
+                                radius: 4) // Skeleton untuk judul teks
+                            : const Text(
+                                "Weekly Stats",
+                                style: TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors
+                                        .white // Pastikan warna teks terlihat di dark mode
+                                    ),
+                              ),
+                        const SizedBox(height: 16),
 
-                      // Leave Request Section
-                      _buildLeaveRequestBanner(),
-                    ],
+                        // Stats Grid vs Skeleton
+                        _isLoading
+                            ? _buildStatsGridSkeleton() // Buat helper khusus grid skeleton jika perlu
+                            : _buildStatsGrid(),
+
+                        const SizedBox(height: 24),
+                        _buildLeaveRequestBanner(),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -232,10 +336,40 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // --- WIDGET: GREETING CARD (BG IMAGE) ---
   Widget _buildGreetingCard() {
+    // Ambil waktu saat ini
+    final now = DateTime.now();
+    final hour = now.hour;
+
+    // 1. Logika Salam (Greeting)
+    String greeting = "Selamat Malam";
+    if (hour >= 5 && hour < 11) {
+      greeting = "Selamat Pagi";
+    } else if (hour >= 11 && hour < 15) {
+      greeting = "Selamat Siang";
+    } else if (hour >= 15 && hour < 18) {
+      greeting = "Selamat Sore";
+    }
+
+    // 2. Logika Tanggal Manual (Tanpa package intl)
+    List months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'Mei',
+      'Jun',
+      'Jul',
+      'Agu',
+      'Sep',
+      'Okt',
+      'Nov',
+      'Des'
+    ];
+    String formattedDate = "${now.day} ${months[now.month - 1]} ${now.year}";
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
-      // Setting Background Card pakai Gambar
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(24),
         image: const DecorationImage(
@@ -243,39 +377,65 @@ class _HomeScreenState extends State<HomeScreen> {
           fit: BoxFit.cover,
         ),
       ),
-      child: Stack(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Text Content
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                "Halo, Selamat Pagi!",
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                "19 Jan 2025",
-                style: TextStyle(
-                    fontSize: 12, color: Colors.white.withOpacity(0.8)),
-              ),
-              const SizedBox(height: 24),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                decoration: BoxDecoration(
-                  color: AppColors.primaryBlue,
-                  borderRadius: BorderRadius.circular(20),
+          Text(
+            "Halo, $greeting!", // Salam Dinamis
+            style: const TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w900,
+                color: Colors.white // Pastikan warna kontras dengan BG
                 ),
-                child: const Text(
-                  "Bagus, anda tepat waktu.",
-                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
-                ),
-              ),
-            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            formattedDate, // Tanggal Dinamis
+            style:
+                TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.8)),
+          ),
+          const SizedBox(height: 24),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            decoration: BoxDecoration(
+              color: AppColors.primaryBlue,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: const Text(
+              "Bagus, anda tepat waktu.",
+              style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white),
+            ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildFlatSkeleton(
+      {required double width, required double height, double radius = 16}) {
+    return Container(
+      width: width,
+      height: height,
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.08), // Warna flat abu-abu transparan
+        borderRadius: BorderRadius.circular(radius),
+      ),
+    );
+  }
+
+  Widget _buildStatsGridSkeleton() {
+    return GridView.count(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      crossAxisCount: 2,
+      childAspectRatio: 2.1,
+      mainAxisSpacing: 12,
+      crossAxisSpacing: 12,
+      children: List.generate(
+          4, (index) => _buildFlatSkeleton(width: double.infinity, height: 80)),
     );
   }
 
@@ -305,18 +465,24 @@ class _HomeScreenState extends State<HomeScreen> {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF1E3A2B), // Hijau Gelap
+                    // Logika warna: jika belum absen, pakai abu-abu, jika sudah pakai hijau
+                    color: _jamMasuk == "--:--"
+                        ? Colors.white10
+                        : const Color(0xFF1E3A2B),
                     borderRadius: BorderRadius.circular(30),
                   ),
-                  child: const Text("06.28",
-                      style: TextStyle(
-                          color: Color(0xFF4CD964),
-                          fontWeight: FontWeight.bold)),
+                  child: Text(
+                    _jamMasuk, // Variabel dinamis
+                    style: TextStyle(
+                        color: _jamMasuk == "--:--"
+                            ? Colors.grey
+                            : const Color(0xFF4CD964),
+                        fontWeight: FontWeight.bold),
+                  ),
                 )
               ],
             ),
           ),
-          // Divider Vertical
           Container(height: 40, width: 1, color: Colors.white10),
           // Bagian Pulang
           Expanded(
@@ -332,12 +498,19 @@ class _HomeScreenState extends State<HomeScreen> {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF2C2C2C), // Abu Gelap
+                    color: _jamPulang == "--:--"
+                        ? Colors.white10
+                        : const Color(0xFF2C2C2C),
                     borderRadius: BorderRadius.circular(30),
                   ),
-                  child: const Text("16.00",
-                      style: TextStyle(
-                          color: Colors.grey, fontWeight: FontWeight.bold)),
+                  child: Text(
+                    _jamPulang, // Variabel dinamis
+                    style: TextStyle(
+                        color: _jamPulang == "--:--"
+                            ? Colors.grey
+                            : Colors.blueAccent,
+                        fontWeight: FontWeight.bold),
+                  ),
                 )
               ],
             ),

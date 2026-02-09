@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:identra_mobile_flutter/home.dart';
 import 'package:identra_mobile_flutter/login_page.dart';
+import 'package:identra_mobile_flutter/profile.dart';
 import 'package:identra_mobile_flutter/stats.dart';
 import 'dart:ui';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -90,7 +91,7 @@ class _MainNavigationState extends State<MainNavigation> {
         children: [
           HomeScreen(),
           StatsScreen(),
-          _buildProfilePage(context)
+          ProfilePage()
         ],
       ),
       bottomNavigationBar: _buildBottomNav(),
@@ -146,49 +147,6 @@ class _MainNavigationState extends State<MainNavigation> {
             ),
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _buildProfilePage(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.account_circle, size: 100, color: Colors.white24),
-          const SizedBox(height: 16),
-          const Text(
-            "Akun Saya",
-            style: TextStyle(
-                color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            "Keluar dari akun untuk mengganti user atau mengakhiri sesi.",
-            textAlign: TextAlign.center,
-            style:
-                TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 14),
-          ),
-          const SizedBox(height: 32),
-
-          // --- TOMBOL LOGOUT ---
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: () => _handleLogout(context),
-              icon: const Icon(Icons.logout, color: Colors.white),
-              label: const Text("Logout Sekarang",
-                  style: TextStyle(color: Colors.white)),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.redAccent.withOpacity(0.8),
-                padding: const EdgeInsets.symmetric(vertical: 15),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12)),
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }

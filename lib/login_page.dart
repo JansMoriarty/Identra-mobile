@@ -44,27 +44,22 @@ class _LoginPageState extends State<LoginPage> {
 
     await prefs.setString('auth_token', token);
 
-    // ✅ FIX: Ambil Nama (Cek 'nama' dulu karena di API kamu pakai 'nama')
+    // Ambil data dari Map userData
+    final String guruId = userData['guru_id']?.toString() ?? "";
     final String name = userData['nama'] ?? userData['name'] ?? "Guru";
 
-    // ✅ FIX: Ambil Jabatan dengan fallback yang jelas
-    final String jabatan = userData['jabatan_aktif'] ?? "Belum Ditugaskan";
+    // --- TAMBAHKAN BARIS INI ---
+    // Sesuaikan key 'jabatan' dengan nama field yang dikirim API kamu
+    final String jabatan =
+        userData['jabatan'] ?? userData['jabatan_aktif'] ?? "Guru";
 
-    // ✅ FIX: Ambil Email dan Role
-    final String email = userData['email'] ?? "";
-    final String role = userData['role'] ?? 'guru';
-
+    await prefs.setString('guru_id', guruId);
     await prefs.setString('user_name', name);
-    await prefs.setString('user_email', email);
-    await prefs.setString('user_role', role);
-    await prefs.setString('jabatan_aktif', jabatan);
+    await prefs.setString('jabatan_aktif', jabatan); // Simpan ke storage
 
-    // Debugging untuk memastikan di console HP datanya sudah benar
-    debugPrint("==== SESSION SAVED ====");
-    debugPrint("Token  : $token");
-    debugPrint("Name   : $name");
-    debugPrint("Jabatan: $jabatan");
-    debugPrint("=======================");
+    // Set default jam
+    await prefs.setString('jam_masuk', "--:--");
+    await prefs.setString('jam_pulang', "--:--");
 
     if (!mounted) return;
     Navigator.pushReplacement(
