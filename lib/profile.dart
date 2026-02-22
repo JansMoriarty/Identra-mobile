@@ -102,7 +102,8 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   // PINDAHKAN ATAU PASTIKAN FUNGSI INI DI DALAM _ProfilePageState
-  Widget _buildMenuTile(IconData icon, String title) {
+  // Ubah definisi fungsi agar menerima parameter ketiga yaitu 'onTap'
+  Widget _buildMenuTile(IconData icon, String title, VoidCallback onTap) {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
@@ -112,12 +113,12 @@ class _ProfilePageState extends State<ProfilePage> {
       ),
       child: ListTile(
         leading: Icon(icon, color: AppColors.primaryBlue),
-        title: Text(title,
-            style: const TextStyle(color: Colors.white, fontSize: 14)),
+        title: Text(
+          title,
+          style: const TextStyle(color: Colors.white, fontSize: 14),
+        ),
         trailing: const Icon(Icons.chevron_right, color: Colors.white24),
-        onTap: () {
-          // Tambahkan aksi di sini nanti
-        },
+        onTap: onTap, // Sekarang ListTile tahu harus ngapain kalau diklik
       ),
     );
   }
@@ -194,9 +195,17 @@ class _ProfilePageState extends State<ProfilePage> {
                   padding: const EdgeInsets.symmetric(horizontal: 20),
                   child: Column(
                     children: [
-                      _buildMenuTile(Icons.person_outline, "Edit Profile"),
-                      _buildMenuTile(Icons.lock_outline, "Ganti Password"),
-                      _buildMenuTile(Icons.help_outline, "Pusat Bantuan"),
+                      _buildMenuTile(Icons.person_outline, "Edit Profile", () {
+                        print("Edit Profile diklik");
+                      }),
+                      _buildMenuTile(Icons.lock_outline, "Ganti Password", () {
+                        print("Ganti Password diklik");
+                      }),
+                      _buildMenuTile(
+                          Icons.face_retouching_natural, "Verifikasi Wajah",
+                          () {
+                        Navigator.pushNamed(context, '/face-scanner');
+                      }),
                       const Spacer(),
                       Padding(
                         padding: const EdgeInsets.only(bottom: 30),

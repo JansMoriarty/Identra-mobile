@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:identra_mobile_flutter/leave_request_sheet.dart';
 import 'package:identra_mobile_flutter/models/attendance_model.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
@@ -57,12 +58,46 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  // Statistik Mingguan
+  int _countTerlambat = 0;
+  int _countIzin = 0;
+  int _countSakit = 0;
+  int _countAlfa = 0;
+  String _statusAbsensi = "Hadir"; // Defaultnya Hadir
+  bool hasAppliedToday = false; // Default: belum mengajukan
+  String leaveMessage =
+      "Ajukan izin dengan cepat melalui form digital di sini.";
   String _userName = "Loading...";
   String _jabatanAktif = "Belum Ditugaskan";
   String _guruId = "";
   String _jamMasuk = "--:--";
   String _jamPulang = "--:--";
   bool _isLoading = false;
+
+  // Update fungsi _showLeaveRequestForm di HomeScreen
+  void _showLeaveRequestForm(BuildContext context) async {
+    final result = await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => const LeaveRequestSheet(),
+    );
+
+    if (result == true) {
+      // 1. Simpan tanggal hari ini ke SharedPreferences
+      final prefs = await SharedPreferences.getInstance();
+      String todayStr =
+          DateTime.now().toString().substring(0, 10); // Format: 2024-05-20
+      await prefs.setString('last_submit_date', todayStr);
+
+      // 2. Update UI seketika
+      setState(() {
+        hasAppliedToday = true;
+      });
+
+      // 3. Tarik data terbaru (opsional)
+      fetchAttendanceToday();
+    }
+  }
 
   Future<void> _handleRefresh() async {
     setState(() => _isLoading = true);
@@ -127,13 +162,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
 
-    // --- TAMBAHKAN LOG INI ---
-    print("JABATAN_DARI_PREFS: ${prefs.getString('jabatan_aktif')}");
-
     setState(() {
       _userName = prefs.getString('user_name') ?? "Guru";
 
-      // Perbaikan logika di sini
       String? storedJabatan = prefs.getString('jabatan_aktif');
       _jabatanAktif = (storedJabatan != null && storedJabatan.isNotEmpty)
           ? storedJabatan
@@ -142,6 +173,19 @@ class _HomeScreenState extends State<HomeScreen> {
       _guruId = prefs.getString('guru_id') ?? "";
       _jamMasuk = prefs.getString('jam_masuk') ?? "--:--";
       _jamPulang = prefs.getString('jam_pulang') ?? "--:--";
+
+      // --- TAMBAHKAN LOGIKA INI ---
+      // Cek apakah hari ini guru sudah pernah submit izin
+      String todayStr =
+          DateTime.now().toString().substring(0, 10); // Hasil: "2024-05-22"
+      String? lastSubmitDate = prefs.getString('last_submit_date');
+
+      if (lastSubmitDate == todayStr) {
+        hasAppliedToday = true;
+      } else {
+        // Jika sudah ganti hari, reset statusnya jadi false lagi
+        hasAppliedToday = false;
+      }
     });
   }
 
@@ -173,20 +217,74 @@ class _HomeScreenState extends State<HomeScreen> {
       if (response.statusCode == 200) {
         final responseData = jsonDecode(response.body);
 
-        if (responseData['success'] == true && responseData['data'] != null) {
-          final data = responseData['data'];
+        // Di dalam fetchAttendanceToday, setelah decode JSON:
+        if (response.statusCode == 200) {
+          final responseData = jsonDecode(response.body);
 
-          setState(() {
-            // Ambil jam_masuk dan jam_pulang dari JSON
-            _jamMasuk = data['jam_masuk'] ?? "--:--";
-            _jamPulang = data['jam_pulang'] ?? "--:--";
-          });
+          if (responseData['success'] == true && responseData['data'] != null) {
+            final data = responseData['data'];
+            final stats =
+                responseData['stats']; // <--- Asumsi API punya field 'stats'
+
+            setState(() {
+              _jamMasuk = data['jam_masuk'] ?? "--:--";
+              _jamPulang = data['jam_pulang'] ?? "--:--";
+              _statusAbsensi = data['status'] ?? "Hadir";
+
+              // MENGISI DATA STATISTIK DARI API
+              // Sesuaikan nama field ('terlambat_count', dll) dengan response dari backend-mu
+              _countTerlambat = data['terlambat_count'] ?? 0;
+              _countIzin = data['izin_count'] ?? 0;
+              _countSakit = data['sakit_count'] ?? 0;
+              _countAlfa = data['alfa_count'] ?? 0;
+
+              // Logika banner
+              if (_statusAbsensi.toLowerCase() != "hadir") {
+                hasAppliedToday = true;
+              }
+            });
+          }
         }
       } else {
         print("DEBUG: Server Error ${response.statusCode}");
       }
     } catch (e) {
       print("DEBUG: Connection Error: $e");
+    }
+  }
+
+  Future<void> fetchWeeklyStats() async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    final String? token = prefs.getString('auth_token');
+    final String? guruId = prefs.getString('guru_id');
+
+    if (token == null || guruId == null) return;
+
+    try {
+      final response = await http.get(
+        Uri.parse(
+            "https://spinningly-proscientific-renay.ngrok-free.dev/api/attendance/stats/$guruId"),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+          'ngrok-skip-browser-warning': 'true',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['success'] == true) {
+          setState(() {
+            // Sesuaikan dengan key yang dikirim oleh backend-mu
+            _countTerlambat = data['data']['terlambat'] ?? 0;
+            _countIzin = data['data']['izin'] ?? 0;
+            _countSakit = data['data']['sakit'] ?? 0;
+            _countAlfa = data['data']['alfa'] ?? 0;
+          });
+        }
+      }
+    } catch (e) {
+      print("Error fetch stats: $e");
     }
   }
 
@@ -439,95 +537,198 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // --- WIDGET: JAM MASUK / PULANG ---
   Widget _buildAttendanceRow() {
+    // 1. Tentukan apakah sedang dalam mode Izin/Sakit
+    bool isIzin = _statusAbsensi.toLowerCase() == "izin";
+    bool isSakit = _statusAbsensi.toLowerCase() == "sakit";
+    bool isSpecialStatus = isIzin || isSakit;
+
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 20),
       decoration: BoxDecoration(
-        color: AppColors.cardBg
-            .withOpacity(0.6), // Semi transparan agar bg page terlihat dikit
+        color: AppColors.cardBg.withOpacity(0.6),
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: Colors.white.withOpacity(0.05)),
       ),
+      child: isSpecialStatus
+          ? _buildSpecialStatusUI(isSakit) // Tampilan jika Izin/Sakit
+          : _buildNormalAttendanceUI(), // Tampilan normal Masuk/Pulang
+    );
+  }
+
+  Widget _buildSpecialStatusUI(bool isSakit) {
+    Color statusColor = isSakit ? AppColors.purpleIcon : AppColors.blueIcon;
+    // Kita buat gradient background yang sangat halus
+    Color bgGradient = isSakit ? AppColors.purpleBg : AppColors.blueBg;
+
+    return Container(
+      width: double.infinity,
       child: Row(
         children: [
-          // Bagian Masuk
+          // 1. Ikon dengan Background Bulat & Glow
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: statusColor.withOpacity(0.1),
+              shape: BoxShape.circle,
+              border:
+                  Border.all(color: statusColor.withOpacity(0.3), width: 1.5),
+              // boxShadow: [
+              //   BoxShadow(
+              //     color: statusColor.withOpacity(0.2),
+              //     blurRadius: 12,
+              //     spreadRadius: 1,
+              //   )
+              // ],
+            ),
+            child: Icon(
+              isSakit
+                  ? Icons.medical_services_rounded
+                  : Icons.assignment_turned_in_rounded,
+              color: statusColor,
+              size: 26,
+            ),
+          ),
+          const SizedBox(width: 16),
+
+          // 2. Teks Status
           Expanded(
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
               children: [
-                const Text("MASUK",
-                    style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 1)),
-                const SizedBox(height: 12),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-                  decoration: BoxDecoration(
-                    // Logika warna: jika belum absen, pakai abu-abu, jika sudah pakai hijau
-                    color: _jamMasuk == "--:--"
-                        ? Colors.white10
-                        : const Color(0xFF1E3A2B),
-                    borderRadius: BorderRadius.circular(30),
+                Row(
+                  children: [
+                    Text(
+                      isSakit ? "SAKIT" : "IZIN",
+                      style: GoogleFonts.poppins(
+                        color: statusColor,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 16,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    // Badge "Approved" kecil
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.green.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Text(
+                        "APPROVED",
+                        style: TextStyle(
+                          color: Colors.green,
+                          fontSize: 8,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  "Status absensi Anda hari ini adalah ${isSakit ? 'Sakit' : 'Izin'}.",
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.6),
+                    fontSize: 11,
                   ),
-                  child: Text(
-                    _jamMasuk, // Variabel dinamis
-                    style: TextStyle(
-                        color: _jamMasuk == "--:--"
-                            ? Colors.grey
-                            : const Color(0xFF4CD964),
-                        fontWeight: FontWeight.bold),
-                  ),
-                )
+                ),
               ],
             ),
           ),
-          Container(height: 40, width: 1, color: Colors.white10),
-          // Bagian Pulang
-          Expanded(
-            child: Column(
-              children: [
-                const Text("PULANG",
-                    style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 1)),
-                const SizedBox(height: 12),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: _jamPulang == "--:--"
-                        ? Colors.white10
-                        : const Color(0xFF2C2C2C),
-                    borderRadius: BorderRadius.circular(30),
-                  ),
-                  child: Text(
-                    _jamPulang, // Variabel dinamis
-                    style: TextStyle(
-                        color: _jamPulang == "--:--"
-                            ? Colors.grey
-                            : Colors.blueAccent,
-                        fontWeight: FontWeight.bold),
-                  ),
-                )
-              ],
-            ),
-          ),
+
+          // 3. Dekorasi kecil di pojok kanan (opsional)
+          Icon(
+            Icons.verified_user_rounded,
+            color: Colors.white.withOpacity(0.05),
+            size: 40,
+          )
         ],
       ),
     );
   }
 
+  // --- WIDGET: JAM MASUK / PULANG ---
+  Widget _buildNormalAttendanceUI() {
+    return Row(
+      children: [
+        // Bagian Masuk
+        Expanded(
+          child: Column(
+            children: [
+              const Text("MASUK",
+                  style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1)),
+              const SizedBox(height: 12),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                decoration: BoxDecoration(
+                  // Logika warna: jika belum absen, pakai abu-abu, jika sudah pakai hijau
+                  color: _jamMasuk == "--:--"
+                      ? Colors.white10
+                      : const Color(0xFF1E3A2B),
+                  borderRadius: BorderRadius.circular(30),
+                ),
+                child: Text(
+                  _jamMasuk, // Variabel dinamis
+                  style: TextStyle(
+                      color: _jamMasuk == "--:--"
+                          ? Colors.grey
+                          : const Color(0xFF4CD964),
+                      fontWeight: FontWeight.bold),
+                ),
+              )
+            ],
+          ),
+        ),
+        Container(height: 40, width: 1, color: Colors.white10),
+        // Bagian Pulang
+        Expanded(
+          child: Column(
+            children: [
+              const Text("PULANG",
+                  style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1)),
+              const SizedBox(height: 12),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                decoration: BoxDecoration(
+                  color: _jamPulang == "--:--"
+                      ? Colors.white10
+                      : const Color(0xFF2C2C2C),
+                  borderRadius: BorderRadius.circular(30),
+                ),
+                child: Text(
+                  _jamPulang, // Variabel dinamis
+                  style: TextStyle(
+                      color: _jamPulang == "--:--"
+                          ? Colors.grey
+                          : const Color.fromARGB(255, 126, 126, 126),
+                      fontWeight: FontWeight.bold),
+                ),
+              )
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   // --- WIDGET: STATS GRID ---
   Widget _buildStatsGrid() {
-    // Helper function untuk membuat 1 kotak stat
     Widget statItem(
         String title, String count, Color baseColor, IconData icon) {
       return Container(
         decoration: BoxDecoration(
-          // Card menggunakan warna kategori dengan opacity rendah (0.1 - 0.2)
           color: baseColor.withOpacity(0.15),
           borderRadius: BorderRadius.circular(20),
           border: Border.all(color: baseColor.withOpacity(0.2)),
@@ -535,20 +736,19 @@ class _HomeScreenState extends State<HomeScreen> {
         padding: const EdgeInsets.all(12),
         child: Row(
           children: [
-            // Wrapper Icon dengan warna solid
             Container(
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                  color: baseColor,
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: baseColor.withOpacity(0.3),
-                      blurRadius: 8,
-                      offset: const Offset(0, 3),
-                    )
-                  ]),
-              // Icon dibuat warna putih sesuai request
+                color: baseColor,
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: baseColor.withOpacity(0.3),
+                    blurRadius: 8,
+                    offset: const Offset(0, 3),
+                  )
+                ],
+              ),
               child: Icon(icon, color: Colors.white, size: 20),
             ),
             const SizedBox(width: 12),
@@ -563,12 +763,13 @@ class _HomeScreenState extends State<HomeScreen> {
                         fontWeight: FontWeight.bold, fontSize: 13),
                     overflow: TextOverflow.ellipsis,
                   ),
-                  Text(count,
-                      style: TextStyle(
-                        fontSize: 11,
-                        // Warna teks sedikit mengikuti warna base agar harmonis
-                        color: Colors.white.withOpacity(0.7),
-                      )),
+                  Text(
+                    "$count Hari", // Tampilkan angka dari state
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.white.withOpacity(0.7),
+                    ),
+                  ),
                 ],
               ),
             )
@@ -585,44 +786,138 @@ class _HomeScreenState extends State<HomeScreen> {
       mainAxisSpacing: 12,
       crossAxisSpacing: 12,
       children: [
-        // Kita cukup masukkan warna utamanya saja (Icon Color), logic opacity ada di atas
-        statItem("Terlambat", "0 Hari", AppColors.orangeIcon,
+        statItem("Terlambat", _countTerlambat.toString(), AppColors.orangeIcon,
             Icons.access_time_filled),
-        statItem("Izin", "2 Hari", AppColors.blueIcon, Icons.description),
-        statItem(
-            "Sakit", "0 Hari", AppColors.purpleIcon, Icons.medical_services),
-        statItem("Tanpa Ket", "0 Hari", AppColors.redIcon, Icons.cancel),
+        statItem("Izin", _countIzin.toString(), AppColors.blueIcon,
+            Icons.description),
+        statItem("Sakit", _countSakit.toString(), AppColors.purpleIcon,
+            Icons.medical_services),
+        statItem("Tanpa Ket", _countAlfa.toString(), AppColors.redIcon,
+            Icons.cancel),
       ],
     );
   }
 
-  // --- WIDGET: LEAVE REQUEST ---
   Widget _buildLeaveRequestBanner() {
+    // Tentukan warna dan konten berdasarkan status hasAppliedToday
+    final Color cardColor = hasAppliedToday
+        ? Colors.white.withOpacity(0.05)
+        : const Color(0xFF1E293B);
+    final String title =
+        hasAppliedToday ? "Pengajuan Terkirim" : "Berhalangan Hadir?";
+    final String subtitle = hasAppliedToday
+        ? "Anda sudah melakukan pengajuan izin untuk hari ini."
+        : "Ajukan izin dengan cepat melalui form digital di sini.";
+
     return Container(
-      padding: const EdgeInsets.all(20),
+      margin: const EdgeInsets.symmetric(horizontal: 4),
       decoration: BoxDecoration(
-        color: const Color(0xFF161B22), // Warna dasar gelap
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-            color: AppColors.primaryBlue.withOpacity(0.3)), // Border Biru tipis
+        borderRadius: BorderRadius.circular(24),
+        gradient: hasAppliedToday
+            ? null
+            : LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [const Color(0xFF1E293B), const Color(0xFF0F172A)],
+              ),
+        color: hasAppliedToday
+            ? const Color(0xFF161B22)
+            : null, // Warna redup jika sudah submit
+        border: hasAppliedToday ? Border.all(color: Colors.white12) : null,
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text("Leave Request",
-              style: TextStyle(
-                  color: AppColors.primaryBlue,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16)),
-          const SizedBox(height: 8),
-          Text(
-            "Berhalangan hadir? Ajukan izin dengan klik disini lalu lengkapi alasan dan tanggal ketidakhadiran Anda.",
-            style: TextStyle(
-                color: Colors.white.withOpacity(0.7),
-                fontSize: 12,
-                height: 1.5),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          // JIKA SUDAH APPLY, TAP DINONAKTIFKAN (null)
+          onTap: hasAppliedToday ? null : () => _showLeaveRequestForm(context),
+          borderRadius: BorderRadius.circular(24),
+          child: Stack(
+            children: [
+              Positioned(
+                right: -20,
+                bottom: -20,
+                child: CircleAvatar(
+                  radius: 50,
+                  backgroundColor: hasAppliedToday
+                      ? Colors.white.withOpacity(0.02)
+                      : AppColors.primaryBlue.withOpacity(0.05),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(24),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: hasAppliedToday
+                                  ? Colors.green.withOpacity(0.1)
+                                  : AppColors.primaryBlue.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              hasAppliedToday ? "SUBMITTED" : "LEAVE REQUEST",
+                              style: TextStyle(
+                                color: hasAppliedToday
+                                    ? Colors.green
+                                    : AppColors.primaryBlue,
+                                fontWeight: FontWeight.w800,
+                                fontSize: 12,
+                                letterSpacing: 1.2,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            title,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 18,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            subtitle,
+                            style: TextStyle(
+                              color: Colors.white
+                                  .withOpacity(hasAppliedToday ? 0.3 : 0.6),
+                              fontSize: 13,
+                              height: 1.4,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    // Ikon berubah jadi Checkmark jika sudah submit
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: hasAppliedToday
+                            ? Colors.white10
+                            : AppColors.primaryBlue,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        hasAppliedToday
+                            ? Icons.check_circle_outline_rounded
+                            : Icons.arrow_forward_rounded,
+                        color: hasAppliedToday ? Colors.green : Colors.white,
+                        size: 28,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
