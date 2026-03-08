@@ -22,10 +22,16 @@ dependencies:
   google_mlkit_face_detection: ^0.11.0
   google_mlkit_commons: ^0.8.1
   path_provider: ^2.1.2
+  mobile_scanner: ^5.1.0
+  vibration: ^2.0.1
+  audioplayers: ^5.2.1
 
   path: ^1.9.0
-  tflite_flutter: ^0.10.0
+  tflite_flutter: ^0.10.4
   image: ^4.0.17
+
+dependency_overrides:
+  tflite_flutter: ^0.10.4
 
 flutter:
   uses-material-design: true
@@ -34,7 +40,7 @@ flutter:
     - assets/images/bg_greeting.png # Background kartu ucapan
     - assets/images/profile.jpeg
 
-    - assets/models/mobilefacenet.tflite
+    - assets/sounds/beep.mp3
 
 dev_dependencies:
   flutter_test:

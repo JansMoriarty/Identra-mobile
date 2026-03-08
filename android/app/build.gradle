@@ -7,7 +7,7 @@ plugins {
 
 android {
     namespace = "com.example.identra_mobile_flutter"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 35
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -19,24 +19,42 @@ android {
         jvmTarget = JavaVersion.VERSION_1_8
     }
 
+    // Blok packaging yang sudah diperbaiki untuk Gradle 8.3
+    packaging {
+        resources {
+            pickFirsts += [
+                'lib/x86/libc++_shared.so',
+                'lib/x86_64/libc++_shared.so',
+                'lib/armeabi-v7a/libc++_shared.so',
+                'lib/arm64-v8a/libc++_shared.so'
+            ]
+        }
+    }
+
+    // Untuk memastikan model TFLite tidak dikompres
+    aaptOptions {
+        noCompress 'tflite'
+        noCompress 'lite'
+    }
+
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.example.identra_mobile_flutter"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
+        minSdk = 26 
+        targetSdk = 35 
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.debug
         }
     }
+}
+
+dependencies {
+    // Tambahkan baris ini agar Android mendownload library TFLite-nya
+    implementation 'org.tensorflow:tensorflow-lite:2.12.0'
 }
 
 flutter {

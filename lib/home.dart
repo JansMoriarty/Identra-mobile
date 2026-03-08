@@ -10,6 +10,29 @@ void main() {
   runApp(const AbsensiApp());
 }
 
+class DashedLinePainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    double dashHeight = 5, dashSpace = 3, startY = 0;
+    final paint = Paint()
+      ..color = AppColors.primaryBlue.withOpacity(0.3)
+      ..strokeWidth = 2;
+
+    // Ambil titik tengah secara horizontal
+    double centerX = size.width / 2;
+
+    while (startY < size.height) {
+      // Gambar garis tepat di sumbu X tengah
+      canvas.drawLine(
+          Offset(centerX, startY), Offset(centerX, startY + dashHeight), paint);
+      startY += dashHeight + dashSpace;
+    }
+  }
+
+  @override
+  bool shouldRepaint(CustomPainter oldDelegate) => false;
+}
+
 // --- KONFIGURASI WARNA ---
 class AppColors {
   // Warna Utama (Transparan karena kita pakai Background Image)
@@ -54,10 +77,12 @@ class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  State<HomeScreen> createState() => HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+List<dynamic> attendedSchedules = [];
+
+class HomeScreenState extends State<HomeScreen> {
   // Statistik Mingguan
   int _countTerlambat = 0;
   int _countIzin = 0;
@@ -73,6 +98,8 @@ class _HomeScreenState extends State<HomeScreen> {
   String _jamMasuk = "--:--";
   String _jamPulang = "--:--";
   bool _isLoading = false;
+
+  List<dynamic> _schedules = [];
 
   // Update fungsi _showLeaveRequestForm di HomeScreen
   void _showLeaveRequestForm(BuildContext context) async {
@@ -99,13 +126,54 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _handleRefresh() async {
+  Future<void> fetchSchedules() async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    final String? token = prefs.getString('auth_token');
+    final String? guruId = prefs.getString('guru_id');
+
+    if (guruId == null || guruId.isEmpty) {
+      print("DEBUG: Guru ID kosong, gagal fetch schedule.");
+      return;
+    }
+
+    try {
+      final response = await http.get(
+        Uri.parse(
+            "https://spinningly-proscientific-renay.ngrok-free.dev/api/schedules/today/$guruId"),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+          'Connection': 'Keep-Alive', // Tambahkan ini untuk menjaga koneksi
+          'ngrok-skip-browser-warning': 'true',
+        },
+      ).timeout(
+          const Duration(seconds: 10)); // Tambahkan timeout agar tidak hang
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (mounted) {
+          setState(() {
+            _schedules = data['data'] ?? [];
+          });
+        }
+      } else {
+        print("DEBUG: Server Error ${response.statusCode} - ${response.body}");
+      }
+    } catch (e) {
+      print("Error fetch schedule: $e");
+      // Jika error, coba panggil lagi sekali (Recursive call) setelah 1 detik
+      // Future.delayed(const Duration(seconds: 1), () => fetchSchedules());
+    }
+  }
+
+  Future<void> handleRefresh() async {
     setState(() => _isLoading = true);
 
     // Menjalankan kedua fungsi secara bersamaan
     await Future.wait([
       _loadUserData(),
       fetchAttendanceToday(),
+      fetchSchedules(),
     ]);
 
     // Beri sedikit delay agar user sempat melihat state loading (opsional)
@@ -154,6 +222,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _initData() async {
     await _loadUserData();
     await fetchAttendanceToday();
+    await fetchSchedules();
   }
 
   AttendanceModel? _todayAttendance;
@@ -304,24 +373,22 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         child: SafeArea(
-          // --- BUNGKUS DENGAN REFRESH INDICATOR ---
           child: RefreshIndicator(
-            onRefresh: _handleRefresh, // Fungsi yang dipanggil saat ditarik
-            color: Colors.blue, // Warna spinner
+            onRefresh: handleRefresh,
+            color: Colors.blue,
             child: Column(
               children: [
                 Expanded(
                   child: SingleChildScrollView(
-                    // physics wajib AlwaysScrollable agar bisa di-refresh meski konten pendek
                     physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.all(18.0),
+                    padding: const EdgeInsets.fromLTRB(18.0, 18.0, 18.0, 90.0),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         _buildHeader(themeColor),
                         const SizedBox(height: 28),
 
-                        // Greeting Card vs Skeleton
+                        // Greeting Card
                         _isLoading
                             ? _buildFlatSkeleton(
                                 width: double.infinity, height: 160, radius: 24)
@@ -329,36 +396,39 @@ class _HomeScreenState extends State<HomeScreen> {
 
                         const SizedBox(height: 16),
 
-                        // Attendance Row vs Skeleton
+                        // Attendance Row
                         _isLoading
                             ? _buildFlatSkeleton(
                                 width: double.infinity, height: 100, radius: 20)
                             : _buildAttendanceRow(),
 
                         const SizedBox(height: 28),
+
+                        // Judul Seksi Jadwal
                         _isLoading
                             ? _buildFlatSkeleton(
-                                width: 150,
-                                height: 20,
-                                radius: 4) // Skeleton untuk judul teks
+                                width: 150, height: 20, radius: 4)
                             : const Text(
-                                "Weekly Stats",
+                                "Today Schedule",
                                 style: TextStyle(
                                     fontSize: 18,
                                     fontWeight: FontWeight.bold,
-                                    color: Colors
-                                        .white // Pastikan warna teks terlihat di dark mode
-                                    ),
+                                    color: Colors.white),
                               ),
                         const SizedBox(height: 16),
 
-                        // Stats Grid vs Skeleton
+                        // --- PENGGANTI WEEKLY STATS ---
                         _isLoading
-                            ? _buildStatsGridSkeleton() // Buat helper khusus grid skeleton jika perlu
-                            : _buildStatsGrid(),
+                            ? _buildStatsGridSkeleton() // Bisa kamu ganti dengan skeleton list nanti
+                            : _buildScheduleTimeline(), // Memanggil fungsi timeline yang baru
 
                         const SizedBox(height: 24),
+
+                        // Banner Pengajuan Izin tetap di paling bawah
                         _buildLeaveRequestBanner(),
+
+                        // Beri sedikit space di paling bawah agar tidak nempel navigasi
+                        const SizedBox(height: 20),
                       ],
                     ),
                   ),
@@ -723,78 +793,360 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // --- WIDGET: STATS GRID ---
-  Widget _buildStatsGrid() {
-    Widget statItem(
-        String title, String count, Color baseColor, IconData icon) {
-      return Container(
-        decoration: BoxDecoration(
-          color: baseColor.withOpacity(0.15),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: baseColor.withOpacity(0.2)),
-        ),
-        padding: const EdgeInsets.all(12),
-        child: Row(
+  Widget _buildEmptyState() {
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 20),
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: AppColors.cardBg.withOpacity(1),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white.withOpacity(0.05)),
+      ),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              padding: const EdgeInsets.all(10),
+              padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: baseColor,
+                color: AppColors.primaryBlue.withOpacity(0.1),
                 shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: baseColor.withOpacity(0.3),
-                    blurRadius: 8,
-                    offset: const Offset(0, 3),
-                  )
-                ],
               ),
-              child: Icon(icon, color: Colors.white, size: 20),
+              child: Icon(
+                Icons.calendar_today_rounded,
+                color: AppColors.primaryBlue.withOpacity(0.5),
+                size: 32,
+              ),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    title,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.bold, fontSize: 13),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  Text(
-                    "$count Hari", // Tampilkan angka dari state
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: Colors.white.withOpacity(0.7),
-                    ),
-                  ),
-                ],
+            const SizedBox(height: 16),
+            const Text(
+              "Tidak Ada Jadwal",
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+                color: Colors.white,
               ),
-            )
+            ),
+            const SizedBox(height: 4),
+            Text(
+              "Hari ini adalah waktu istirahat Anda.",
+              style: TextStyle(
+                color: AppColors.textGrey,
+                fontSize: 13,
+              ),
+            ),
           ],
         ),
-      );
+      ),
+    );
+  }
+
+  Widget _buildScheduleTimeline() {
+    if (_schedules.isEmpty) {
+      return _buildEmptyState();
     }
 
-    return GridView.count(
+    // --- 1. LOGIKA PENYISIPAN ISTIRAHAT DINAMIS ---
+    List<dynamic> combinedSchedules = List.from(_schedules);
+    bool hasBreak = combinedSchedules.any((item) => item['is_break'] == true);
+
+    if (!hasBreak) {
+      int insertIndex = combinedSchedules.indexWhere((item) {
+        String startTime = item['start_time']?.toString() ?? "00:00:00";
+        return startTime.compareTo("12:00:00") >= 0;
+      });
+
+      if (insertIndex == -1) insertIndex = combinedSchedules.length;
+
+      combinedSchedules.insert(insertIndex, {
+        'subject_name': 'ISTIRAHAT',
+        'start_time': '12:00:00',
+        'end_time': '13:00:00',
+        'classroom_name': 'Kantin / Area Bebas',
+        'is_break': true,
+        'is_attended': false, // Istirahat tidak perlu absen
+      });
+    }
+
+    return ListView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      crossAxisCount: 2,
-      childAspectRatio: 2.1,
-      mainAxisSpacing: 12,
-      crossAxisSpacing: 12,
-      children: [
-        statItem("Terlambat", _countTerlambat.toString(), AppColors.orangeIcon,
-            Icons.access_time_filled),
-        statItem("Izin", _countIzin.toString(), AppColors.blueIcon,
-            Icons.description),
-        statItem("Sakit", _countSakit.toString(), AppColors.purpleIcon,
-            Icons.medical_services),
-        statItem("Tanpa Ket", _countAlfa.toString(), AppColors.redIcon,
-            Icons.cancel),
-      ],
+      itemCount: combinedSchedules.length,
+      itemBuilder: (context, index) {
+        final item = combinedSchedules[index];
+        
+        print("DEBUG: Pelajaran ${item['subject_name']} statusnya: ${item['is_attended']}");
+        bool isLast = index == combinedSchedules.length - 1;
+        bool isBreak = item['is_break'] == true;
+        bool isAttended = item['is_attended'] == true;
+        print("DEBUG: Isi lengkap item: ${item.toString()}");
+
+        // Ambil jam dengan aman (menghindari RangeError substring)
+        String rawStart = item['start_time']?.toString() ?? "00:00";
+        String rawEnd = item['end_time']?.toString() ?? "00:00";
+        String start = rawStart.split(':').take(2).join(':');
+        String end = rawEnd.split(':').take(2).join(':');
+
+        // Logika status aktif (pastikan format padLeft agar 09:00 bukan 9:00)
+        final now = DateTime.now();
+        final currentTime =
+            "${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}";
+
+        // Cek apakah sekarang berada di dalam rentang waktu pelajaran
+        bool isActive = currentTime.compareTo(start) >= 0 &&
+            currentTime.compareTo(end) <= 0;
+
+        // Warna utama berdasarkan status
+        Color activeColor =
+            isBreak ? Colors.orangeAccent : AppColors.primaryBlue;
+        if (isAttended) activeColor = Colors.greenAccent;
+
+        return IntrinsicHeight(
+          child: Row(
+            children: [
+              // --- Timeline Indicator ---
+              SizedBox(
+                width: 30,
+                child: Column(
+                  children: [
+                    Expanded(
+                      child: index == 0
+                          ? const SizedBox()
+                          : CustomPaint(
+                              size: Size.infinite,
+                              painter: DashedLinePainter(),
+                            ),
+                    ),
+                    // Titik (Dot) - Berubah Hijau jika sudah absen
+                    Container(
+                      width: isActive ? 14 : 12,
+                      height: isActive ? 14 : 12,
+                      decoration: BoxDecoration(
+                        color: isAttended
+                            ? Colors.greenAccent
+                            : (isActive
+                                ? activeColor
+                                : AppColors.primaryBlue.withOpacity(0.3)),
+                        shape: BoxShape.circle,
+                        boxShadow: isActive || isAttended
+                            ? [
+                                BoxShadow(
+                                  color: (isAttended
+                                          ? Colors.greenAccent
+                                          : activeColor)
+                                      .withOpacity(0.4),
+                                  blurRadius: 10,
+                                  spreadRadius: 2,
+                                ),
+                              ]
+                            : [],
+                      ),
+                    ),
+                    Expanded(
+                      child: isLast
+                          ? const SizedBox()
+                          : CustomPaint(
+                              size: Size.infinite,
+                              painter: DashedLinePainter(),
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(width: 8),
+
+              // --- Schedule Card ---
+              Expanded(
+                child: Container(
+                  margin:
+                      const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                  decoration: BoxDecoration(
+                    color: isBreak
+                        ? Colors.orangeAccent.withOpacity(0.05)
+                        : (isAttended
+                            ? Colors.greenAccent.withOpacity(0.02)
+                            : AppColors.cardBg),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: isAttended
+                          ? Colors.greenAccent.withOpacity(0.5)
+                          : (isActive ? activeColor : Colors.transparent),
+                      width: 2,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.05),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Stack(
+                    children: [
+                      // Icon Background dekoratif
+                      Positioned(
+                        right: -10,
+                        bottom: -10,
+                        child: Icon(
+                          isAttended
+                              ? Icons.check_circle_rounded
+                              : (isBreak
+                                  ? Icons.coffee_rounded
+                                  : Icons.school_rounded),
+                          size: 80,
+                          color: isAttended
+                              ? Colors.greenAccent.withOpacity(0.05)
+                              : Colors.white.withOpacity(0.03),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _buildTimeColumn(start, end, isBreak, activeColor),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Icon(
+                                        isBreak
+                                            ? Icons.restaurant_rounded
+                                            : Icons.menu_book_rounded,
+                                        size: 16,
+                                        color: activeColor,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          item['subject_name'] ??
+                                              "Mata Pelajaran",
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 15,
+                                            color: isBreak
+                                                ? Colors.orangeAccent
+                                                : Colors.white,
+                                            height: 1.2,
+                                          ),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  // Info Lokasi
+                                  Row(
+                                    children: [
+                                      Icon(
+                                        isBreak
+                                            ? Icons.rocket_launch_sharp
+                                            : Icons.meeting_room_rounded,
+                                        size: 14,
+                                        color: AppColors.textGrey,
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        isBreak
+                                            ? "Selamat Beristirahat"
+                                            : "Kelas ${item['classroom_name']}",
+                                        style: const TextStyle(
+                                          color: AppColors.textGrey,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+
+                                  // --- LOGIKA LABEL STATUS (ABSEN VS TERSEDIA) ---
+                                  if (!isBreak) ...[
+                                    const SizedBox(height: 12),
+                                    if (isAttended)
+                                      _buildStatusLabel(
+                                          "Absensi Selesai",
+                                          Colors.greenAccent,
+                                          Icons.verified_rounded)
+                                    else if (isActive)
+                                      _buildStatusLabel(
+                                          "Sesi Presensi Tersedia",
+                                          Colors.amberAccent,
+                                          Icons.qr_code_scanner_rounded),
+                                  ],
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+// Fungsi Helper untuk Label agar kode UI di atas tetap bersih
+  Widget _buildStatusLabel(String text, Color color, IconData icon) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withOpacity(0.2), width: 1),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: color),
+          const SizedBox(width: 6),
+          Text(
+            text,
+            style: TextStyle(
+              color: color,
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+// Helper widget untuk kolom waktu agar kode lebih bersih
+  Widget _buildTimeColumn(String start, String end, bool isBreak, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(15),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(start,
+              style: TextStyle(
+                  fontWeight: FontWeight.w900, fontSize: 14, color: color)),
+          const SizedBox(height: 2),
+          Text("SD",
+              style: TextStyle(
+                  fontSize: 8,
+                  fontWeight: FontWeight.bold,
+                  color: color.withOpacity(0.5))),
+          const SizedBox(height: 2),
+          Text(end,
+              style: TextStyle(
+                  fontWeight: FontWeight.w700, fontSize: 12, color: color)),
+        ],
+      ),
     );
   }
 

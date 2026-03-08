@@ -1,17 +1,45 @@
+buildscript {
+    ext.kotlin_version = '1.8.22' // Naikkan ke 1.9.0 supaya kompatibel
+    repositories {
+        google()
+        mavenCentral()
+        maven { url "https://plugins.gradle.org/m2/" }
+    }
+
+    dependencies {
+        // Ganti ke 8.1.0 agar mendukung SDK 35 dengan lebih baik
+        classpath 'com.android.tools.build:gradle:7.3.0' 
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+    }
+}
+
 allprojects {
     repositories {
         google()
         mavenCentral()
+        maven { url 'https://jitpack.io' }
     }
 }
 
 rootProject.buildDir = "../build"
+
 subprojects {
     project.buildDir = "${rootProject.buildDir}/${project.name}"
+
+    afterEvaluate { project ->
+        if (project.extensions.findByName("android") != null) {
+            project.android {
+                if (namespace == null) {
+                    namespace project.group
+                }
+                // NAIKKAN KE 35
+                compileSdkVersion 35 
+            }
+        }
+    }
 }
-subprojects {
-    project.evaluationDependsOn(":app")
-}
+
+// HAPUS blok subprojects { project.evaluationDependsOn(":app") } yang lama
 
 tasks.register("clean", Delete) {
     delete rootProject.buildDir
