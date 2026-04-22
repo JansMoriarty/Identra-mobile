@@ -6,6 +6,7 @@ import 'package:identra_mobile_flutter/home.dart';
 import 'package:identra_mobile_flutter/main_navigation.dart';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:identra_mobile_flutter/services/face_service.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -25,6 +26,8 @@ class _LoginPageState extends State<LoginPage> {
   void initState() {
     super.initState();
     _checkExistingToken();
+
+    FaceService().init();
   }
 
   Future<void> _checkExistingToken() async {
@@ -44,27 +47,36 @@ class _LoginPageState extends State<LoginPage> {
 
     await prefs.setString('auth_token', token);
 
-    // Ambil data dari Map userData
-    final String guruId = userData['guru_id']?.toString() ?? "";
-    final String name = userData['nama'] ?? userData['name'] ?? "Guru";
+    // PERHATIKAN: Nama field disesuaikan dengan JSON dari server
+    final String userId = userData['id']?.toString() ?? "";
+    final String guruUuid = userData['guru_id']?.toString() ?? "";
 
-    // --- TAMBAHKAN BARIS INI ---
-    // Sesuaikan key 'jabatan' dengan nama field yang dikirim API kamu
-    final String jabatan =
-        userData['jabatan'] ?? userData['jabatan_aktif'] ?? "Guru";
+    // Ubah 'nama' jadi 'name' sesuai JSON
+    final String name = userData['name'] ?? "Guru";
 
-    await prefs.setString('guru_id', guruId);
+    final String jabatan = userData['jabatan_aktif'] ?? "Belum Ditugaskan";
+
+    // Simpan ke SharedPreferences
+    await prefs.setString('user_id', userId);
+    await prefs.setString(
+        'guru_id', guruUuid); // Ini yang dipakai Home untuk API
     await prefs.setString('user_name', name);
-    await prefs.setString('jabatan_aktif', jabatan); // Simpan ke storage
+    await prefs.setString('jabatan_aktif', jabatan);
 
     // Set default jam
     await prefs.setString('jam_masuk', "--:--");
     await prefs.setString('jam_pulang', "--:--");
 
+    print("DEBUG SAVE: Simpan Guru ID: $guruUuid dengan Nama: $name");
+
     if (!mounted) return;
+
+    // Pastikan MainNavigation atau HomeScreen yang dipanggil
     Navigator.pushReplacement(
       context,
-      MaterialPageRoute(builder: (context) => const MainNavigation()),
+      MaterialPageRoute(
+          builder: (context) =>
+              const MainNavigation()), // Sesuaikan dengan tujuanmu
     );
   }
 
@@ -99,27 +111,25 @@ class _LoginPageState extends State<LoginPage> {
       if (!mounted) return;
 
       if (response.statusCode == 200) {
-        // ✅ AMAN: Ambil data & token secara dinamis
+        // PERBAIKAN DI SINI: Sesuaikan dengan struktur JSON "data": {"user":..., "token":...}
         var dataPart = responseData['data'];
-        String token = dataPart['token'] ?? "";
 
-        var userData;
-        // Cek apakah user ada di dalam 'user' atau langsung di 'data'
-        if (dataPart['user'] != null) {
-          userData = dataPart['user'];
-        } else if (dataPart is List && dataPart.isNotEmpty) {
-          userData = dataPart[0]; // Jika response berupa list seperti contohmu
+        if (dataPart != null) {
+          String token = dataPart['token'] ?? ""; // Ambil token dari dalam data
+          var userObject = dataPart['user']; // Ambil objek user dari dalam data
+
+          if (userObject != null) {
+            // Ambil nama dari userObject (Key-nya 'name' sesuai JSON kamu)
+            String teacherName = userObject['name'] ?? "Guru";
+            _showSuccess("Selamat datang, $teacherName!");
+
+            // Kirim token dan objek user ke saveSession
+            await _saveSession(token, userObject);
+          } else {
+            _showSnackBar("Objek user tidak ditemukan", Colors.orange);
+          }
         } else {
-          userData = dataPart;
-        }
-
-        if (userData != null) {
-          String teacherName = userData['nama'] ?? userData['name'] ?? "Guru";
-          _showSuccess("Selamat datang, $teacherName!");
-
-          await _saveSession(token, userData);
-        } else {
-          _showSnackBar("Data user tidak ditemukan", Colors.orange);
+          _showSnackBar("Data login tidak lengkap", Colors.orange);
         }
       } else {
         _showSnackBar(
@@ -128,7 +138,7 @@ class _LoginPageState extends State<LoginPage> {
     } catch (e) {
       debugPrint("Login Error: $e");
       if (!mounted) return;
-      _showSnackBar("Gagal terhubung ke server. Periksa koneksi.", Colors.red);
+      _showSnackBar("Gagal terhubung ke server.", Colors.red);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }

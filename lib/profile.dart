@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:identra_mobile_flutter/face_register.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 // Pindahkan AppColors ke paling atas (di luar class) agar bisa diakses global di file ini
@@ -204,7 +205,7 @@ class _ProfilePageState extends State<ProfilePage> {
                       _buildMenuTile(
                           Icons.face_retouching_natural, "Verifikasi Wajah",
                           () {
-                        Navigator.pushNamed(context, '/face-scanner');
+                        Navigator.pushNamed(context, '/register-face');
                       }),
                       const Spacer(),
                       Padding(

@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:identra_mobile_flutter/face_auth_page.dart';
 import 'package:identra_mobile_flutter/leave_request_sheet.dart';
 import 'package:identra_mobile_flutter/models/attendance_model.dart';
+import 'package:identra_mobile_flutter/models/components/sidebar_component.dart';
+import 'package:identra_mobile_flutter/models/point_model.dart';
+import 'package:identra_mobile_flutter/qr_scanner.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
@@ -83,11 +87,9 @@ class HomeScreen extends StatefulWidget {
 List<dynamic> attendedSchedules = [];
 
 class HomeScreenState extends State<HomeScreen> {
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  List<dynamic> _vouchers = [];
   // Statistik Mingguan
-  int _countTerlambat = 0;
-  int _countIzin = 0;
-  int _countSakit = 0;
-  int _countAlfa = 0;
   String _statusAbsensi = "Hadir"; // Defaultnya Hadir
   bool hasAppliedToday = false; // Default: belum mengajukan
   String leaveMessage =
@@ -98,6 +100,15 @@ class HomeScreenState extends State<HomeScreen> {
   String _jamMasuk = "--:--";
   String _jamPulang = "--:--";
   bool _isLoading = false;
+  bool _isSidebarOpen = false;
+  bool _isMainCheckedIn = false;
+  final String baseUrl =
+      "https://spinningly-proscientific-renay.ngrok-free.dev/api";
+
+  int userPoints = 0;
+  String currentRank = "Guru Muda";
+
+  String? token;
 
   List<dynamic> _schedules = [];
 
@@ -125,6 +136,41 @@ class HomeScreenState extends State<HomeScreen> {
       fetchAttendanceToday();
     }
   }
+
+  Future<void> _fetchVouchers() async {
+    final prefs = await SharedPreferences.getInstance();
+    final String? token = prefs.getString('auth_token');
+
+    // Sesuaikan URL ini dengan endpoint API Inventory/Voucher kamu
+    final url = Uri.parse(
+        'https://spinningly-proscientific-renay.ngrok-free.dev/api/my-tokens');
+
+    try {
+      final response = await http.get(
+        url,
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+          'ngrok-skip-browser-warning': 'true',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> responseData = jsonDecode(response.body);
+        setState(() {
+          // Mengambil array dari key 'data' sesuai struktur JSON yang kamu kirim tadi
+          _vouchers = responseData['data'] ?? [];
+        });
+        print("Voucher dimuat: ${_vouchers.length} item");
+      } else {
+        print("Gagal ambil voucher: ${response.statusCode}");
+      }
+    } catch (e) {
+      print("Error fetch voucher: $e");
+    }
+  }
+
+  
 
   Future<void> fetchSchedules() async {
     final SharedPreferences prefs = await SharedPreferences.getInstance();
@@ -174,6 +220,8 @@ class HomeScreenState extends State<HomeScreen> {
       _loadUserData(),
       fetchAttendanceToday(),
       fetchSchedules(),
+      _fetchUserPoints(),
+      _fetchVouchers()
     ]);
 
     // Beri sedikit delay agar user sempat melihat state loading (opsional)
@@ -217,12 +265,55 @@ class HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _initData();
+    print("Daftar Voucher: $_vouchers");
+  }
+
+  Future<void> _fetchUserPoints() async {
+    try {
+      final response = await http.get(
+        Uri.parse("$baseUrl/profile/summary"),
+        headers: {
+          'Accept': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> responseData = json.decode(response.body);
+
+        // DEBUG: Cek di console apakah datanya benar-benar masuk
+        print("API Response: ${response.body}");
+
+        if (mounted) {
+          setState(() {
+            // Gunakan casting 'as int' atau parsing untuk keamanan
+            userPoints = responseData['data']['current_points'] ?? 0;
+            currentRank = responseData['data']['rank_name'] ?? 'Guru';
+          });
+        }
+      } else {
+        print("API Error: ${response.statusCode}");
+      }
+    } catch (e) {
+      print("Exception: $e");
+    }
   }
 
   Future<void> _initData() async {
-    await _loadUserData();
-    await fetchAttendanceToday();
-    await fetchSchedules();
+    setState(() => _isLoading = true);
+    await _loadUserData(); // Pastikan token sudah terisi di sini
+
+    if (token != null) {
+      // Cek apakah token ada
+      await Future.wait([
+        fetchAttendanceToday(),
+        fetchSchedules(),
+        _fetchUserPoints(), // Harus ada di sini!
+      ]);
+      _fetchVouchers();
+    }
+
+    if (mounted) setState(() => _isLoading = false);
   }
 
   AttendanceModel? _todayAttendance;
@@ -231,31 +322,39 @@ class HomeScreenState extends State<HomeScreen> {
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
 
+    String? storedGuruId = prefs.getString('guru_id');
+    // --- TAMBAHKAN BARIS INI ---
+    String? storedToken = prefs.getString('auth_token');
+    print("DEBUG: Loading Guru ID: $storedGuruId");
+    print("DEBUG: Loading Token: $storedToken"); // Cek apakah ini muncul di log
+    // ---------------------------
+
     setState(() {
       _userName = prefs.getString('user_name') ?? "Guru";
+      _jabatanAktif = prefs.getString('jabatan_aktif') ?? "Belum Ditugaskan";
+      _guruId = storedGuruId ?? "";
 
-      String? storedJabatan = prefs.getString('jabatan_aktif');
-      _jabatanAktif = (storedJabatan != null && storedJabatan.isNotEmpty)
-          ? storedJabatan
-          : "Guru Tetap";
+      // --- UPDATE STATE TOKEN ---
+      token = storedToken;
+      // ---------------------------
 
-      _guruId = prefs.getString('guru_id') ?? "";
       _jamMasuk = prefs.getString('jam_masuk') ?? "--:--";
       _jamPulang = prefs.getString('jam_pulang') ?? "--:--";
 
-      // --- TAMBAHKAN LOGIKA INI ---
-      // Cek apakah hari ini guru sudah pernah submit izin
-      String todayStr =
-          DateTime.now().toString().substring(0, 10); // Hasil: "2024-05-22"
+      String todayStr = DateTime.now().toString().substring(0, 10);
       String? lastSubmitDate = prefs.getString('last_submit_date');
-
-      if (lastSubmitDate == todayStr) {
-        hasAppliedToday = true;
-      } else {
-        // Jika sudah ganti hari, reset statusnya jadi false lagi
-        hasAppliedToday = false;
-      }
+      hasAppliedToday = (lastSubmitDate == todayStr);
     });
+
+    if (_guruId.isEmpty) {
+      print("WARNING: Guru ID tidak ditemukan di storage!");
+    }
+
+    // Log tambahan untuk memastikan token siap dipakai
+    if (token == null) {
+      print(
+          "WARNING: Token tidak ditemukan! Pastikan saat Login, token disimpan ke prefs dengan key 'token'");
+    }
   }
 
   Future<void> fetchAttendanceToday() async {
@@ -266,7 +365,6 @@ class HomeScreenState extends State<HomeScreen> {
     if (token == null || guruId == null) return;
 
     try {
-      // SESUAIKAN: Path parameter /{guru_id} bukan ?guru_id=
       final String url =
           "https://spinningly-proscientific-renay.ngrok-free.dev/api/attendance/today/$guruId";
 
@@ -275,44 +373,37 @@ class HomeScreenState extends State<HomeScreen> {
         headers: {
           'Authorization': 'Bearer $token',
           'Accept': 'application/json',
-          // WAJIB: Agar Ngrok tidak mengirim halaman "Browser Warning"
           'ngrok-skip-browser-warning': 'true',
         },
       );
 
-      print("DEBUG: Fetching to $url");
-      print("DEBUG: Response Body: ${response.body}");
-
       if (response.statusCode == 200) {
         final responseData = jsonDecode(response.body);
 
-        // Di dalam fetchAttendanceToday, setelah decode JSON:
-        if (response.statusCode == 200) {
-          final responseData = jsonDecode(response.body);
+        if (responseData['success'] == true) {
+          setState(() {
+            // --- LOGIKA UTAMA DI SINI ---
+            // Jika data tidak null, berarti guru SUDAH absen masuk hari ini
+            _isMainCheckedIn = responseData['data'] != null;
 
-          if (responseData['success'] == true && responseData['data'] != null) {
-            final data = responseData['data'];
-            final stats =
-                responseData['stats']; // <--- Asumsi API punya field 'stats'
-
-            setState(() {
+            if (_isMainCheckedIn) {
+              final data = responseData['data'];
               _jamMasuk = data['jam_masuk'] ?? "--:--";
               _jamPulang = data['jam_pulang'] ?? "--:--";
               _statusAbsensi = data['status'] ?? "Hadir";
 
-              // MENGISI DATA STATISTIK DARI API
-              // Sesuaikan nama field ('terlambat_count', dll) dengan response dari backend-mu
-              _countTerlambat = data['terlambat_count'] ?? 0;
-              _countIzin = data['izin_count'] ?? 0;
-              _countSakit = data['sakit_count'] ?? 0;
-              _countAlfa = data['alfa_count'] ?? 0;
+              // Mengisi data statistik jika ada
 
-              // Logika banner
               if (_statusAbsensi.toLowerCase() != "hadir") {
                 hasAppliedToday = true;
               }
-            });
-          }
+            } else {
+              // Jika data null (Belum absen), pastikan status kembali ke default
+              _jamMasuk = "--:--";
+              _jamPulang = "--:--";
+              _statusAbsensi = "Belum Absen";
+            }
+          });
         }
       } else {
         print("DEBUG: Server Error ${response.statusCode}");
@@ -339,19 +430,6 @@ class HomeScreenState extends State<HomeScreen> {
           'ngrok-skip-browser-warning': 'true',
         },
       );
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data['success'] == true) {
-          setState(() {
-            // Sesuaikan dengan key yang dikirim oleh backend-mu
-            _countTerlambat = data['data']['terlambat'] ?? 0;
-            _countIzin = data['data']['izin'] ?? 0;
-            _countSakit = data['data']['sakit'] ?? 0;
-            _countAlfa = data['data']['alfa'] ?? 0;
-          });
-        }
-      }
     } catch (e) {
       print("Error fetch stats: $e");
     }
@@ -361,83 +439,112 @@ class HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     Color themeColor = _getAvatarColor(_userName);
 
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: Container(
-        width: double.infinity,
-        height: double.infinity,
-        decoration: const BoxDecoration(
-          image: DecorationImage(
-            image: AssetImage('assets/images/bg_main.png'),
-            fit: BoxFit.cover,
-          ),
-        ),
-        child: SafeArea(
-          child: RefreshIndicator(
-            onRefresh: handleRefresh,
-            color: Colors.blue,
-            child: Column(
-              children: [
-                Expanded(
-                  child: SingleChildScrollView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(18.0, 18.0, 18.0, 90.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _buildHeader(themeColor),
-                        const SizedBox(height: 28),
+    // Bungkus Scaffold dengan Stack agar Sidebar bisa muncul di atasnya
+    return Stack(
+      children: [
+        Scaffold(
+          backgroundColor: Colors.transparent,
+          key: _scaffoldKey,
+          // endDrawer dihapus karena kita pakai SidebarOverlay di bawah
+          body: Container(
+            width: double.infinity,
+            height: double.infinity,
+            decoration: const BoxDecoration(
+              image: DecorationImage(
+                image: AssetImage('assets/images/bg_main.png'),
+                fit: BoxFit.cover,
+              ),
+            ),
+            child: SafeArea(
+              child: RefreshIndicator(
+                onRefresh: handleRefresh,
+                color: Colors.blue,
+                child: Column(
+                  children: [
+                    Expanded(
+                      child: SingleChildScrollView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        padding:
+                            const EdgeInsets.fromLTRB(18.0, 18.0, 18.0, 90.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Pastikan di dalam _buildHeader, tombol menu memanggil
+                            // setState(() => _isSidebarOpen = true);
+                            _buildHeader(themeColor),
+                            const SizedBox(height: 28),
 
-                        // Greeting Card
-                        _isLoading
-                            ? _buildFlatSkeleton(
-                                width: double.infinity, height: 160, radius: 24)
-                            : _buildGreetingCard(),
+                            // Greeting Card
+                            _isLoading
+                                ? _buildFlatSkeleton(
+                                    width: double.infinity,
+                                    height: 160,
+                                    radius: 24)
+                                : _buildGreetingCard(),
 
-                        const SizedBox(height: 16),
+                            const SizedBox(height: 16),
 
-                        // Attendance Row
-                        _isLoading
-                            ? _buildFlatSkeleton(
-                                width: double.infinity, height: 100, radius: 20)
-                            : _buildAttendanceRow(),
+                            // Attendance Row
+                            _isLoading
+                                ? _buildFlatSkeleton(
+                                    width: double.infinity,
+                                    height: 100,
+                                    radius: 20)
+                                : _buildAttendanceRow(),
 
-                        const SizedBox(height: 28),
+                            const SizedBox(height: 28),
 
-                        // Judul Seksi Jadwal
-                        _isLoading
-                            ? _buildFlatSkeleton(
-                                width: 150, height: 20, radius: 4)
-                            : const Text(
-                                "Today Schedule",
-                                style: TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.white),
-                              ),
-                        const SizedBox(height: 16),
+                            // Judul Seksi Jadwal
+                            _isLoading
+                                ? _buildFlatSkeleton(
+                                    width: 150, height: 20, radius: 4)
+                                : const Text(
+                                    "Today Schedule",
+                                    style: TextStyle(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.white),
+                                  ),
+                            const SizedBox(height: 16),
 
-                        // --- PENGGANTI WEEKLY STATS ---
-                        _isLoading
-                            ? _buildStatsGridSkeleton() // Bisa kamu ganti dengan skeleton list nanti
-                            : _buildScheduleTimeline(), // Memanggil fungsi timeline yang baru
+                            // --- PENGGANTI WEEKLY STATS ---
+                            _isLoading
+                                ? _buildStatsGridSkeleton()
+                                : _buildScheduleTimeline(),
 
-                        const SizedBox(height: 24),
+                            const SizedBox(height: 24),
 
-                        // Banner Pengajuan Izin tetap di paling bawah
-                        _buildLeaveRequestBanner(),
+                            // Banner Pengajuan Izin
+                            _buildLeaveRequestBanner(),
 
-                        // Beri sedikit space di paling bawah agar tidak nempel navigasi
-                        const SizedBox(height: 20),
-                      ],
+                            const SizedBox(height: 20),
+                          ],
+                        ),
+                      ),
                     ),
-                  ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
         ),
-      ),
+
+        // --- SIDEBAR OVERLAY NYA DI SINI ---
+        SidebarOverlay(
+          isOpen: _isSidebarOpen, // Buat variabel ini di State kamu
+          onClose: () {
+            setState(() {
+              _isSidebarOpen = false;
+            });
+          },
+          selectedItem: "Dashboard", // Menu yang sedang aktif
+          userName: _userName,
+          jabatan:
+              _jabatanAktif.isNotEmpty ? _jabatanAktif : "Belum Ditugaskan",
+          initials: _getInitials(_userName),
+          themeColor: themeColor,
+        ),
+      ],
     );
   }
 
@@ -486,6 +593,7 @@ class HomeScreenState extends State<HomeScreen> {
         ),
         const Spacer(),
         // Notification Button
+        // Menu Sidebar Button (Pengganti Notif)
         Container(
           decoration: BoxDecoration(
             color: AppColors.cardBg.withOpacity(0.8),
@@ -493,91 +601,296 @@ class HomeScreenState extends State<HomeScreen> {
             border: Border.all(color: Colors.white10),
           ),
           child: IconButton(
-            icon: const Icon(Icons.notifications_none_rounded,
-                color: AppColors.primaryBlue),
-            onPressed: () {},
+            icon: const Icon(Icons.menu_rounded, color: AppColors.primaryBlue),
+            onPressed: () {
+              // --- GANTI BAGIAN INI ---
+              setState(() {
+                _isSidebarOpen = true;
+              });
+              // ------------------------
+            },
           ),
         )
       ],
     );
   }
 
-  // --- WIDGET: GREETING CARD (BG IMAGE) ---
+  // --- WIDGET: GREETING CARD (SAAS PROFESSIONAL & GAMIFIED) ---
+  // --- WIDGET: POINTS & PROGRESS CARD (MINIMALIST SAAS) ---
   Widget _buildGreetingCard() {
-    // Ambil waktu saat ini
-    final now = DateTime.now();
-    final hour = now.hour;
-
-    // 1. Logika Salam (Greeting)
-    String greeting = "Selamat Malam";
-    if (hour >= 5 && hour < 11) {
-      greeting = "Selamat Pagi";
-    } else if (hour >= 11 && hour < 15) {
-      greeting = "Selamat Siang";
-    } else if (hour >= 15 && hour < 18) {
-      greeting = "Selamat Sore";
-    }
-
-    // 2. Logika Tanggal Manual (Tanpa package intl)
-    List months = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'Mei',
-      'Jun',
-      'Jul',
-      'Agu',
-      'Sep',
-      'Okt',
-      'Nov',
-      'Des'
-    ];
-    String formattedDate = "${now.day} ${months[now.month - 1]} ${now.year}";
+    // --- BAGIAN DINAMIS ---
+    // Pastikan variabel userPoints dan currentRank sudah didefinisikan di state
+    int targetPoints = 1000;
+    int pointsNeeded = (targetPoints - userPoints).clamp(0, targetPoints);
+    double progress = (userPoints / targetPoints).clamp(0.0, 1.0);
+    String nextLevelName = "Guru Teladan";
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(20),
+      height: 180,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(24),
-        image: const DecorationImage(
-          image: AssetImage('assets/images/bg_greeting.png'),
-          fit: BoxFit.cover,
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Color(0xFF1E2235),
+            Color(0xFF111424),
+          ],
         ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            "Halo, $greeting!", // Salam Dinamis
-            style: const TextStyle(
-                fontSize: 17,
-                fontWeight: FontWeight.w900,
-                color: Colors.white // Pastikan warna kontras dengan BG
-                ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            formattedDate, // Tanggal Dinamis
-            style:
-                TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.8)),
-          ),
-          const SizedBox(height: 24),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            decoration: BoxDecoration(
-              color: AppColors.primaryBlue,
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: const Text(
-              "Bagus, anda tepat waktu.",
-              style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.white),
-            ),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF111424).withOpacity(0.4),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
           ),
         ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: Stack(
+          children: [
+            // --- VISUAL HOOK (KANAN) ---
+            Positioned(
+              right: -50,
+              top: -50,
+              child: Container(
+                width: 180,
+                height: 180,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: AppColors.primaryBlue.withOpacity(0.15),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppColors.primaryBlue.withOpacity(0.2),
+                      blurRadius: 50,
+                      spreadRadius: 20,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            Positioned(
+              right: -90,
+              bottom: -10,
+              top: 0,
+              child: Opacity(
+                opacity: 0.6,
+                child: Image.asset(
+                  'assets/images/bg_greeting.png',
+                  width: 210,
+                ),
+              ),
+            ),
+
+            // --- BADGE (KANAN ATAS) ---
+            // Menggunakan warna Cyan lembut yang elegan di atas background gelap
+            Positioned(
+              top: 20,
+              right: 20,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: const Color.fromARGB(255, 255, 159, 24)
+                        .withOpacity(0.3),
+                    width: 1,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.verified_user_rounded,
+                        color: Color.fromARGB(255, 255, 159, 24), size: 14),
+                    const SizedBox(width: 6),
+                    Text(
+                      currentRank.toUpperCase(),
+                      style: const TextStyle(
+                        color: Color.fromARGB(255, 255, 159, 24),
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            // --- KONTEN TEKS & PROGRESS (KIRI) ---
+            Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    "TOTAL POIN ANDA",
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1.5,
+                      color: Colors.white.withOpacity(0.5),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.baseline,
+                    textBaseline: TextBaseline.alphabetic,
+                    children: [
+                      Text(
+                        userPoints.toString(), // DATA DINAMIS
+                        style: const TextStyle(
+                          fontSize: 48,
+                          fontWeight: FontWeight.w900,
+                          color: Colors.white,
+                          height: 1.0,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        "PTS",
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.primaryBlue.withOpacity(0.9),
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const Spacer(),
+
+                  // --- PROGRESS LEVELING ---
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.stars_rounded,
+                              color: AppColors.primaryBlue, size: 14),
+                          const SizedBox(width: 6),
+                          Text(
+                            "$pointsNeeded poin lagi menuju ", // DATA DINAMIS
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.7),
+                              fontSize: 11,
+                            ),
+                          ),
+                          Text(
+                            nextLevelName,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Stack(
+                        children: [
+                          Container(
+                            height: 6,
+                            width: MediaQuery.of(context).size.width * 0.7,
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                          // Menggunakan AnimatedContainer agar perpindahan bar poin terasa halus
+                          AnimatedContainer(
+                            duration: const Duration(milliseconds: 800),
+                            height: 6,
+                            width: (MediaQuery.of(context).size.width * 0.7) *
+                                progress,
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                colors: [
+                                  AppColors.primaryBlue,
+                                  Color.fromARGB(255, 48, 69, 174)
+                                ],
+                              ),
+                              borderRadius: BorderRadius.circular(10),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: AppColors.primaryBlue.withOpacity(0.6),
+                                  blurRadius: 8,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // --- HELPER WIDGET: KOTAK METRIK GLASSMORPHISM ---
+  Widget _buildMetricBox({
+    required String title,
+    required String value,
+    required IconData icon,
+    required Color iconColor,
+  }) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.white.withOpacity(0.15), width: 1),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: iconColor.withOpacity(0.2),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, color: iconColor, size: 20),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.6),
+                      fontSize: 9,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    value,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -874,8 +1187,9 @@ class HomeScreenState extends State<HomeScreen> {
       itemCount: combinedSchedules.length,
       itemBuilder: (context, index) {
         final item = combinedSchedules[index];
-        
-        print("DEBUG: Pelajaran ${item['subject_name']} statusnya: ${item['is_attended']}");
+
+        print(
+            "DEBUG: Pelajaran ${item['subject_name']} statusnya: ${item['is_attended']}");
         bool isLast = index == combinedSchedules.length - 1;
         bool isBreak = item['is_break'] == true;
         bool isAttended = item['is_attended'] == true;
@@ -893,8 +1207,13 @@ class HomeScreenState extends State<HomeScreen> {
             "${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}";
 
         // Cek apakah sekarang berada di dalam rentang waktu pelajaran
-        bool isActive = currentTime.compareTo(start) >= 0 &&
+        // Logika status aktif (Jam cocok DAN sudah absen masuk utama)
+        bool isTimeMatch = currentTime.compareTo(start) >= 0 &&
             currentTime.compareTo(end) <= 0;
+
+// Card AKTIF jika: (Waktunya pas DAN sudah absen sekolah) ATAU (Ini adalah jam istirahat)
+        bool isActive =
+            isBreak ? isTimeMatch : (isTimeMatch && _isMainCheckedIn);
 
         // Warna utama berdasarkan status
         Color activeColor =
@@ -957,133 +1276,191 @@ class HomeScreenState extends State<HomeScreen> {
               const SizedBox(width: 8),
 
               // --- Schedule Card ---
+              // --- Schedule Card ---
               Expanded(
-                child: Container(
-                  margin:
-                      const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-                  decoration: BoxDecoration(
-                    color: isBreak
-                        ? Colors.orangeAccent.withOpacity(0.05)
-                        : (isAttended
-                            ? Colors.greenAccent.withOpacity(0.02)
-                            : AppColors.cardBg),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                      color: isAttended
-                          ? Colors.greenAccent.withOpacity(0.5)
-                          : (isActive ? activeColor : Colors.transparent),
-                      width: 2,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.05),
-                        blurRadius: 10,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
-                  ),
-                  child: Stack(
-                    children: [
-                      // Icon Background dekoratif
-                      Positioned(
-                        right: -10,
-                        bottom: -10,
-                        child: Icon(
-                          isAttended
-                              ? Icons.check_circle_rounded
-                              : (isBreak
-                                  ? Icons.coffee_rounded
-                                  : Icons.school_rounded),
-                          size: 80,
+                child: MouseRegion(
+                  // Opsional: Agar kursor berubah jadi pointer di web/desktop
+                  cursor: (isActive && !isAttended && !isBreak)
+                      ? SystemMouseCursors.click
+                      : SystemMouseCursors.basic,
+                  child: GestureDetector(
+                    onTap: () {
+                      if (isBreak) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                                content: Text("Selamat beristirahat! ☕")));
+                      } else if (isAttended) {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                            content: Text(
+                                "Anda sudah melakukan presensi di kelas ini.")));
+                      } else if (isTimeMatch && !_isMainCheckedIn) {
+                        // --- TAMBAHKAN KONDISI INI ---
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            backgroundColor: Colors.orange,
+                            content: Text(
+                                "Silakan lakukan Absen Masuk sekolah terlebih dahulu!"),
+                          ),
+                        );
+                      } else if (isActive) {
+                        // Navigasi ke Scanner
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (context) => const QRScannerPage()),
+                        ).then((result) {
+                          if (result == true) {
+                            // _fetchSchedules();
+                          }
+                        });
+                      } else {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                                content: Text("Sesi presensi belum dimulai.")));
+                      }
+                    },
+                    child: AnimatedContainer(
+                      // Gunakan AnimatedContainer agar transisi border lebih halus
+                      duration: const Duration(milliseconds: 300),
+                      margin: const EdgeInsets.symmetric(
+                          vertical: 8, horizontal: 4),
+                      decoration: BoxDecoration(
+                        color: isBreak
+                            ? Colors.orangeAccent.withOpacity(0.05)
+                            : (isAttended
+                                ? Colors.greenAccent.withOpacity(0.02)
+                                : (isActive
+                                    ? AppColors.cardBg
+                                    : AppColors.cardBg)),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          // Cari bagian ini di dalam Column timeline indicator
                           color: isAttended
-                              ? Colors.greenAccent.withOpacity(0.05)
-                              : Colors.white.withOpacity(0.03),
+                              ? Colors.greenAccent
+                              : (isActive
+                                  ? activeColor
+                                  : AppColors.primaryBlue.withOpacity(
+                                      0.1)), // Pudar jika !isActive
+                          width: 2,
                         ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: isActive && !isAttended
+                                ? activeColor.withOpacity(0.2)
+                                : Colors.black.withOpacity(0.05),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
                       ),
-                      Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _buildTimeColumn(start, end, isBreak, activeColor),
-                            const SizedBox(width: 16),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    children: [
-                                      Icon(
-                                        isBreak
-                                            ? Icons.restaurant_rounded
-                                            : Icons.menu_book_rounded,
-                                        size: 16,
-                                        color: activeColor,
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Expanded(
-                                        child: Text(
-                                          item['subject_name'] ??
-                                              "Mata Pelajaran",
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 15,
-                                            color: isBreak
-                                                ? Colors.orangeAccent
-                                                : Colors.white,
-                                            height: 1.2,
-                                          ),
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 8),
-                                  // Info Lokasi
-                                  Row(
-                                    children: [
-                                      Icon(
-                                        isBreak
-                                            ? Icons.rocket_launch_sharp
-                                            : Icons.meeting_room_rounded,
-                                        size: 14,
-                                        color: AppColors.textGrey,
-                                      ),
-                                      const SizedBox(width: 6),
-                                      Text(
-                                        isBreak
-                                            ? "Selamat Beristirahat"
-                                            : "Kelas ${item['classroom_name']}",
-                                        style: const TextStyle(
-                                          color: AppColors.textGrey,
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w500,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-
-                                  // --- LOGIKA LABEL STATUS (ABSEN VS TERSEDIA) ---
-                                  if (!isBreak) ...[
-                                    const SizedBox(height: 12),
-                                    if (isAttended)
-                                      _buildStatusLabel(
-                                          "Absensi Selesai",
-                                          Colors.greenAccent,
-                                          Icons.verified_rounded)
-                                    else if (isActive)
-                                      _buildStatusLabel(
-                                          "Sesi Presensi Tersedia",
-                                          Colors.amberAccent,
-                                          Icons.qr_code_scanner_rounded),
-                                  ],
-                                ],
-                              ),
+                      child: Stack(
+                        children: [
+                          // ... (Icon Background dekoratif tetap sama)
+                          Positioned(
+                            right: -10,
+                            bottom: -10,
+                            child: Icon(
+                              isAttended
+                                  ? Icons.check_circle_rounded
+                                  : (isBreak
+                                      ? Icons.coffee_rounded
+                                      : Icons.school_rounded),
+                              size: 80,
+                              color: isAttended
+                                  ? Colors.greenAccent.withOpacity(0.05)
+                                  : (isActive
+                                      ? activeColor.withOpacity(0.1)
+                                      : Colors.white.withOpacity(0.03)),
                             ),
-                          ],
-                        ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _buildTimeColumn(
+                                    start, end, isBreak, activeColor),
+                                const SizedBox(width: 16),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Icon(
+                                            isBreak
+                                                ? Icons.restaurant_rounded
+                                                : Icons.menu_book_rounded,
+                                            size: 16,
+                                            color: activeColor,
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Expanded(
+                                            child: Text(
+                                              item['subject_name'] ??
+                                                  "Mata Pelajaran",
+                                              style: TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 15,
+                                                color: isBreak
+                                                    ? Colors.orangeAccent
+                                                    : Colors.white,
+                                                height: 1.2,
+                                              ),
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 8),
+                                      // Info Lokasi
+                                      Row(
+                                        children: [
+                                          Icon(
+                                            isBreak
+                                                ? Icons.rocket_launch_sharp
+                                                : Icons.meeting_room_rounded,
+                                            size: 14,
+                                            color: AppColors.textGrey,
+                                          ),
+                                          const SizedBox(width: 6),
+                                          Text(
+                                            isBreak
+                                                ? "Selamat Beristirahat"
+                                                : "Kelas ${item['classroom_name']}",
+                                            style: const TextStyle(
+                                              color: AppColors.textGrey,
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w500,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+
+                                      // --- LOGIKA LABEL STATUS ---
+                                      if (!isBreak) ...[
+                                        const SizedBox(height: 12),
+                                        if (isAttended)
+                                          _buildStatusLabel(
+                                              "Absensi Selesai",
+                                              Colors.greenAccent,
+                                              Icons.verified_rounded)
+                                        else if (isActive)
+                                          _buildStatusLabel(
+                                              "Klik untuk Presensi", // Diubah agar user tahu bisa diklik
+                                              Colors.amberAccent,
+                                              Icons.qr_code_scanner_rounded),
+                                      ],
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
                 ),
               ),

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:identra_mobile_flutter/face_auth_page.dart';
 import 'package:identra_mobile_flutter/home.dart';
 import 'package:identra_mobile_flutter/login_page.dart';
 import 'package:identra_mobile_flutter/profile.dart';
@@ -46,8 +47,6 @@ class _MainNavigationState extends State<MainNavigation> {
     _pageController.dispose();
     super.dispose();
   }
-
-  
 
   @override
   Widget build(BuildContext context) {
@@ -123,9 +122,8 @@ class _MainNavigationState extends State<MainNavigation> {
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
                 _navItem(0, Icons.home_rounded, "Home"),
-                _navItem(1, Icons.folder_rounded, "Izin"),
+
                 const SizedBox(width: 70), // Ruang untuk Curve In
-                _navItem(3, Icons.bar_chart_rounded, "Stats"),
                 _navItem(4, Icons.person_rounded, "Profile"),
               ],
             ),
@@ -136,12 +134,17 @@ class _MainNavigationState extends State<MainNavigation> {
             bottom: 25, // Posisi tombol agar proporsional dengan lengkungan
             child: GestureDetector(
               onTap: () async {
+                int? idWfhToken = 0;
                 // 1. Tambahkan async di sini
                 // 2. Gunakan await untuk menunggu hasil dari halaman scanner
                 final result = await Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (context) => const QRScannerPage(),
+                    builder: (context) => FaceAuthPage(
+                      statusType: 'hadir',
+                      userTokenId: idWfhToken, // Kirim ID vouchernya
+                      useWfhMode: true, // Aktifkan mode WFH
+                    ),
                   ),
                 );
 

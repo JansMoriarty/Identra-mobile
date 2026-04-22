@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'dart:ui';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:identra_mobile_flutter/services/api_service.dart';
-import 'package:mobile_scanner/mobile_scanner.dart'; // Pastikan sudah import ini
+import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:vibration/vibration.dart';
 import 'package:audioplayers/audioplayers.dart';
 
@@ -22,7 +22,7 @@ class _QRScannerPageState extends State<QRScannerPage>
   bool _isProcessing = false;
 
   void _playBeep() async {
-    await _audioPlayer.play(AssetSource('sounds/beep.mp3'));
+    await _audioPlayer.play(AssetSource('sounds/test.mp3'));
   }
 
   void _processSelection(String qrData) async {
